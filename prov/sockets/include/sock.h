@@ -213,6 +213,16 @@ struct sock_conn_listener {
 	int do_listen;
 };
 
+struct sock_ep_cm_head {
+	fi_epoll_t emap;
+	struct fd_signal signal;
+	fastlock_t signal_lock;
+	fastlock_t list_lock;
+	pthread_t listener_thread;
+	struct dlist_entry close_list;
+	int do_listen;
+};
+
 struct sock_domain {
 	struct fi_info		info;
 	struct fid_domain	dom_fid;
@@ -229,6 +239,7 @@ struct sock_domain {
 	struct dlist_entry	dom_list_entry;
 	struct fi_domain_attr	attr;
 	struct sock_conn_listener conn_listener;
+	struct sock_ep_cm_head cm_head;
 };
 
 /* move to fi_trigger.h when removing experimental tag from work queues */
@@ -500,15 +511,20 @@ struct sock_comp {
 	struct sock_eq *eq;
 };
 
-struct sock_cm_entry {
+struct sock_pep_cm_entry {
 	int sock;
 	int do_listen;
 	int signal_fds[2];
-	uint64_t next_msg_id;
 	fastlock_t lock;
 	int is_connected;
 	pthread_t listener_thread;
-	struct dlist_entry msg_list;
+	struct dlist_entry reject_list;
+};
+
+struct sock_ep_cm_entry {
+	int sock;
+	fastlock_t lock;
+	int is_connected;
 };
 
 struct sock_conn_handle {
@@ -554,7 +570,7 @@ struct sock_ep_attr {
 	uint64_t peer_fid;
 	uint16_t key;
 	int is_enabled;
-	struct sock_cm_entry cm;
+	struct sock_ep_cm_entry cm;
 	struct sock_conn_handle conn_handle;
 	fastlock_t lock;
 
@@ -574,7 +590,8 @@ struct sock_pep {
 	struct fid_pep	pep;
 	struct sock_fabric *sock_fab;
 
-	struct sock_cm_entry cm;
+	struct sock_ep_cm_head cm_head;
+	struct sock_pep_cm_entry cm;
 	struct sockaddr_in src_addr;
 	struct fi_info info;
 	struct sock_eq *eq;
@@ -910,12 +927,18 @@ enum {
 struct sock_conn_req_handle {
 	struct fid handle;
 	struct sock_conn_req *req;
+	struct sock_ep_cm_head *cm_head;
 	int sock_fd;
+	int is_monitored;
 	int is_accepted;
+	int is_finalized;
+	struct {
+		pthread_mutex_t	mutex;
+		pthread_cond_t	cond;
+	} mutex_cond;
 	struct sock_pep *pep;
 	struct sock_ep *ep;
 	size_t paramlen;
-	pthread_t req_handler;
 	struct sockaddr_in dest_addr;
 	struct dlist_entry entry;
 	char cm_data[SOCK_EP_MAX_CM_DATA_SZ];
@@ -1204,5 +1227,9 @@ static inline size_t sock_rx_avail_len(struct sock_rx_entry *rx_entry)
 {
 	return rx_entry->total_len - rx_entry->used;
 }
+
+int sock_ep_cm_start_thread(struct sock_ep_cm_head *cm_head);
+void sock_ep_cm_signal(struct sock_ep_cm_head *cm_head);
+void sock_ep_cm_stop_thread(struct sock_ep_cm_head *cm_head);
 
 #endif

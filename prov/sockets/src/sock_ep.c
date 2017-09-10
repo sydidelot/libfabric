@@ -644,8 +644,8 @@ static void sock_ep_clear_eq_list(struct dlistfd_head *list,
 
 static int sock_ep_close(struct fid *fid)
 {
+	struct sock_conn_req_handle *handle;
 	struct sock_ep *sock_ep;
-	char c = 0;
 
 	switch (fid->fclass) {
 	case FI_CLASS_EP:
@@ -669,16 +669,24 @@ static int sock_ep_close(struct fid *fid)
 		return -FI_EBUSY;
 
 	if (sock_ep->attr->ep_type == FI_EP_MSG) {
-		sock_ep->attr->cm.do_listen = 0;
-		if (ofi_write_socket(sock_ep->attr->cm.signal_fds[0], &c, 1) != 1)
-			SOCK_LOG_DBG("Failed to signal\n");
+		handle = container_of(sock_ep->attr->info.handle,
+		                      struct sock_conn_req_handle, handle);
+		if (handle) {
+			fastlock_acquire(&sock_ep->attr->domain->cm_head.list_lock);
+			dlist_insert_tail(&handle->entry, &sock_ep->attr->domain->cm_head.close_list);
+			fastlock_release(&sock_ep->attr->domain->cm_head.list_lock);
 
-		if (sock_ep->attr->cm.listener_thread &&
-		    pthread_join(sock_ep->attr->cm.listener_thread, NULL)) {
-			SOCK_LOG_ERROR("pthread join failed (%d)\n", errno);
+			sock_ep_cm_signal(&sock_ep->attr->domain->cm_head);
+
+			pthread_mutex_lock(&handle->mutex_cond.mutex);
+			while (!handle->is_finalized)
+				pthread_cond_wait(&handle->mutex_cond.cond,
+				                  &handle->mutex_cond.mutex);
+			pthread_mutex_unlock(&handle->mutex_cond.mutex);
+
+			free(handle->req);
+			free(handle);
 		}
-		ofi_close_socket(sock_ep->attr->cm.signal_fds[0]);
-		ofi_close_socket(sock_ep->attr->cm.signal_fds[1]);
 	} else {
 		if (sock_ep->attr->av)
 			ofi_atomic_dec32(&sock_ep->attr->av->ref);
@@ -1774,17 +1782,6 @@ int sock_alloc_endpoint(struct fid_domain *domain, struct fi_info *info,
 
 	sock_ep->attr->domain = sock_dom;
 	fastlock_init(&sock_ep->attr->cm.lock);
-	if (sock_ep->attr->ep_type == FI_EP_MSG) {
-		dlist_init(&sock_ep->attr->cm.msg_list);
-		if (socketpair(AF_UNIX, SOCK_STREAM, 0,
-			       sock_ep->attr->cm.signal_fds) < 0) {
-			ret = -FI_EINVAL;
-			goto err2;
-		}
-
-		if (fi_fd_nonblock(sock_ep->attr->cm.signal_fds[1]))
-			SOCK_LOG_ERROR("fi_fd_nonblock failed");
-	}
 
 	if (sock_conn_map_init(sock_ep, sock_cm_def_map_sz)) {
 		SOCK_LOG_ERROR("failed to init connection map: %s\n", strerror(errno));
