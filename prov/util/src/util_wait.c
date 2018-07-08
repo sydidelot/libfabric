@@ -219,6 +219,8 @@ int ofi_wait_fd_add(struct util_wait *wait, int fd, uint32_t events,
 	ofi_atomic_initialize32(&fd_entry->ref, 1);
 
 	dlist_insert_tail(&fd_entry->entry, &wait_fd->fd_list);
+
+	fd_signal_set(&wait_fd->signal);
 out:
 	fastlock_release(&wait_fd->lock);
 	return ret;
