@@ -293,6 +293,8 @@ struct vrb_eq {
 	ofi_epoll_t		epollfd;
 	enum fi_wait_obj	wait_obj;
 
+	struct dlist_entry	domain_list;
+
 	struct {
 		/* The connection key map is used during the XRC connection
 		 * process to map an XRC reciprocal connection request back
@@ -366,6 +368,9 @@ struct vrb_domain {
 	/* The EQ is utilized by verbs/MSG */
 	struct vrb_eq			*eq;
 	uint64_t			eq_flags;
+
+	/* List entry used by vrb_eq::domain_list */
+	struct dlist_entry		list_entry;
 
 	ssize_t		(*send_credits)(struct fid_ep *ep, uint64_t credits);
 
@@ -857,6 +862,9 @@ struct vrb_eq_entry *vrb_eq_alloc_entry(uint32_t event,
 					      const void *buf, size_t len);
 ssize_t vrb_eq_write_event(struct vrb_eq *eq, uint32_t event,
 		const void *buf, size_t len);
+
+int vrb_eq_attach_domain(struct vrb_eq *eq, struct vrb_domain *domain);
+int vrb_eq_detach_domain(struct vrb_eq *eq, struct vrb_domain *domain);
 
 int vrb_query_atomic(struct fid_domain *domain_fid, enum fi_datatype datatype,
 			enum fi_op op, struct fi_atomic_attr *attr,

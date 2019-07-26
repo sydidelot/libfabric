@@ -1160,12 +1160,83 @@ out:
 	return ret;
 }
 
+static int
+vrb_eq_read_async_event(struct vrb_eq *eq,
+			struct vrb_domain *domain)
+{
+	struct ibv_async_event async_event;
+	int ret = 0;
+	int error = 0;
+
+	if (ibv_get_async_event(domain->verbs, &async_event) != 0)
+		return 0;
+
+	switch (async_event.event_type) {
+	/* Errors should be reported */
+	case IBV_EVENT_CQ_ERR: /* CQ is in error (CQ overrun) */
+		error = -FI_EOVERRUN;
+		break;
+
+	case IBV_EVENT_SRQ_ERR: /* Error occurred on an SRQ */
+	/* fallthrough */
+	case IBV_EVENT_PORT_ERR: /* Link became unavailable on a port */
+	/* fallthrough */
+	case IBV_EVENT_PATH_MIG_ERR: /* A connection failed to migrate to the alternate path */
+	/* fallthrough */
+	case IBV_EVENT_DEVICE_FATAL: /* CA is in FATAL state */
+		error = -FI_EFAULT;
+		break;
+
+	/* Ignored events */
+	case IBV_EVENT_COMM_EST: /* Communication was established on a QP */
+	/* fallthrough */
+	case IBV_EVENT_SQ_DRAINED: /* Send Queue was drained of outstanding messages in progress */
+	/* fallthrough */
+	case IBV_EVENT_PATH_MIG: /* A connection has migrated to the alternate path */
+	/* fallthrough */
+	case IBV_EVENT_QP_LAST_WQE_REACHED: /* Last WQE Reached on a QP associated with an SRQ */
+	/* fallthrough */
+	case IBV_EVENT_SRQ_LIMIT_REACHED: /* SRQ limit was reached */
+	/* fallthrough */
+	case IBV_EVENT_PORT_ACTIVE: /* Link became active on a port */
+	/* fallthrough */
+	case IBV_EVENT_LID_CHANGE: /* LID was changed on a port */
+	/* fallthrough */
+	case IBV_EVENT_PKEY_CHANGE: /* P_Key table was changed on a port */
+	/* fallthrough */
+	case IBV_EVENT_SM_CHANGE: /* SM was changed on a port */
+	/* fallthrough */
+	case IBV_EVENT_CLIENT_REREGISTER: /* SM sent a CLIENT_REREGISTER request to a port */
+	/* fallthrough */
+	case IBV_EVENT_GID_CHANGE: /* GID table was changed on a port */
+	/* fallthrough */
+	default:
+		ret = 0;
+		goto ack_async_event;
+	}
+
+	VRB_DBG(FI_LOG_EQ, "Reporting async event to EQ: %s\n",
+		ibv_event_type_str(async_event.event_type));
+
+	eq->err.err = error;
+	eq->err.fid = &domain->util_domain.domain_fid.fid;
+	eq->err.prov_errno = async_event.event_type;
+
+	ret = 1;
+
+ack_async_event:
+	ibv_ack_async_event(&async_event);
+
+	return ret;
+}
+
 static ssize_t
 vrb_eq_read(struct fid_eq *eq_fid, uint32_t *event,
 	       void *buf, size_t len, uint64_t flags)
 {
 	struct vrb_eq *eq;
 	struct rdma_cm_event *cma_event;
+	struct vrb_domain *domain;
 	ssize_t ret;
 
 	if (len < sizeof(struct fi_eq_cm_entry))
@@ -1181,6 +1252,14 @@ vrb_eq_read(struct fid_eq *eq_fid, uint32_t *event,
 	/* Skip events that are handled internally (e.g. XRC CM events). */
 	do {
 		ofi_mutex_lock(&eq->lock);
+		/* Read async events */
+		dlist_foreach_container(&eq->domain_list, struct vrb_domain,
+					domain, list_entry) {
+		    ret = vrb_eq_read_async_event(eq, domain);
+		    if (ret)
+			return ret;
+		}
+
 		ret = rdma_get_cm_event(eq->channel, &cma_event);
 		if (ret) {
 			ofi_mutex_unlock(&eq->lock);
@@ -1289,6 +1368,9 @@ static int vrb_eq_close(fid_t fid)
 	eq = container_of(fid, struct vrb_eq, eq_fid.fid);
 	/* TODO: use util code, if possible, and add ref counting */
 
+	if (!dlist_empty(&eq->domain_list))
+		return -FI_EBUSY;
+
 	if (!ofi_rbmap_empty(&eq->xrc.sidr_conn_rbmap))
 		VRB_WARN(FI_LOG_EP_CTRL, "SIDR connection RBmap not empty\n");
 
@@ -1335,6 +1417,7 @@ int vrb_eq_open(struct fid_fabric *fabric, struct fi_eq_attr *attr,
 	if (!_eq)
 		return -ENOMEM;
 
+	dlist_init(&_eq->domain_list);
 	_eq->fab = container_of(fabric, struct vrb_fabric,
 				util_fabric.fabric_fid);
 
@@ -1415,3 +1498,39 @@ err0:
 	return ret;
 }
 
+int vrb_eq_attach_domain(struct vrb_eq *eq, struct vrb_domain *domain)
+{
+	int async_fd = domain->verbs->async_fd;
+	int ret;
+
+	ret = fi_fd_nonblock(async_fd);
+	if (ret)
+		return ret;
+
+	if (ofi_epoll_add(eq->epollfd, async_fd, OFI_EPOLL_IN, domain))
+		return -errno;
+
+	domain->eq = eq;
+
+	ofi_mutex_lock(&eq->lock);
+	dlist_insert_tail(&domain->list_entry, &eq->domain_list);
+	ofi_mutex_unlock(&eq->lock);
+	return 0;
+}
+
+int vrb_eq_detach_domain(struct vrb_eq *eq, struct vrb_domain *domain)
+{
+	int async_fd = domain->verbs->async_fd;
+
+	assert(domain->eq == eq);
+
+	ofi_epoll_del(eq->epollfd, async_fd);
+
+	ofi_mutex_lock(&eq->lock);
+	dlist_remove(&domain->list_entry);
+	ofi_mutex_unlock(&eq->lock);
+
+	domain->eq = NULL;
+
+	return 0;
+}

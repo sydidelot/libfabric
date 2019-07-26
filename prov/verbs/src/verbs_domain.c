@@ -121,6 +121,7 @@ static int vrb_domain_bind(struct fid *fid, struct fid *bfid, uint64_t flags)
 {
 	struct vrb_domain *domain;
 	struct vrb_eq *eq;
+	int ret;
 
 	domain = container_of(fid, struct vrb_domain,
 			      util_domain.domain_fid.fid);
@@ -130,6 +131,10 @@ static int vrb_domain_bind(struct fid *fid, struct fid *bfid, uint64_t flags)
 		switch (domain->ep_type) {
 		case FI_EP_MSG:
 			eq = container_of(bfid, struct vrb_eq, eq_fid);
+			ret = vrb_eq_attach_domain(eq, domain);
+			if (ret)
+				return ret;
+
 			domain->eq = eq;
 			domain->eq_flags = flags;
 			break;
@@ -182,6 +187,12 @@ static int vrb_domain_close(fid_t fid)
 	}
 
 	ofi_mr_cache_cleanup(&domain->cache);
+
+	if (domain->eq) {
+		ret = vrb_eq_detach_domain(domain->eq, domain);
+		if (ret)
+			return ret;
+	}
 
 	if (domain->pd) {
 		ret = ibv_dealloc_pd(domain->pd);
