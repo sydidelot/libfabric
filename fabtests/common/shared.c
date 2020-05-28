@@ -435,7 +435,7 @@ static int ft_alloc_msgs(void)
 		ft_set_tx_rx_sizes(&tx_size, &rx_size);
 		tx_mr_size = 0;
 		rx_mr_size = 0;
-		buf_size = MAX(tx_size, FT_MAX_CTRL_MSG) * opts.window_size + 
+		buf_size = MAX(tx_size, FT_MAX_CTRL_MSG) * opts.window_size +
 			   MAX(rx_size, FT_MAX_CTRL_MSG) * opts.window_size;
 	}
 
@@ -2706,6 +2706,7 @@ void ft_addr_usage()
 			"over the, optional, port");
 	FT_PRINT_OPTS_USAGE("-C <number>", "number of connections to accept before "
 			"cleaning up a server");
+	FT_PRINT_OPTS_USAGE("-F <addr_format>", "Address format (default:FI_FORMAT_UNSPEC)");
 }
 
 void ft_usage(char *name, char *desc)
@@ -2851,6 +2852,16 @@ void ft_parse_addr_opts(int op, char *optarg, struct ft_opts *opts)
 			opts->oob_port = optarg + 1;
 		else
 			opts->oob_port = default_oob_port;
+		break;
+	case 'F':
+		if (!strncasecmp("fi_sockaddr", optarg, 11))
+			opts->address_format = FI_SOCKADDR;
+		else if (!strncasecmp("fi_sockaddr_in", optarg, 14))
+			opts->address_format = FI_SOCKADDR_IN;
+		else if (!strncasecmp("fi_sockaddr_in6", optarg, 15))
+			opts->address_format = FI_SOCKADDR_IN6;
+		else if (!strncasecmp("fi_sockaddr_ib", optarg, 14))
+			opts->address_format = FI_SOCKADDR_IB;
 		break;
 	case 'C':
 		opts->options |= FT_OPT_SERVER_PERSIST;
