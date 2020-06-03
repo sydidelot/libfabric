@@ -1248,7 +1248,8 @@ int vrb_passive_ep(struct fid_fabric *fabric, struct fi_info *info,
 		_pep->info->dest_addrlen = 0;
 	}
 
-	ret = rdma_create_id(NULL, &_pep->id, &_pep->pep_fid.fid, RDMA_PS_TCP);
+	ret = rdma_create_id(NULL, &_pep->id, &_pep->pep_fid.fid,
+	                     vrb_get_port_space(info));
 	if (ret) {
 		VERBS_INFO(FI_LOG_DOMAIN, "Unable to create PEP rdma_cm_id\n");
 		goto err2;

@@ -165,7 +165,7 @@ int vrb_get_rai_id(const char *node, const char *service, uint64_t flags,
 	if (ret)
 		return ret;
 
-	ret = rdma_create_id(NULL, id, NULL, RDMA_PS_TCP);
+	ret = rdma_create_id(NULL, id, NULL, vrb_get_port_space(hints));
 	if (ret) {
 		VERBS_INFO_ERRNO(FI_LOG_FABRIC, "rdma_create_id", errno);
 		ret = -errno;
@@ -215,7 +215,7 @@ int vrb_create_ep(const struct fi_info *hints, enum rdma_port_space ps,
 		return ret;
 	}
 
-	if (rdma_create_id(NULL, id, NULL, ps)) {
+	if (rdma_create_id(NULL, id, NULL, vrb_get_port_space(hints))) {
 		ret = -errno;
 		FI_WARN(&vrb_prov, FI_LOG_FABRIC, "rdma_create_id failed: "
 			"%s (%d)\n", strerror(-ret), -ret);
