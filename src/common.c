@@ -270,6 +270,8 @@ const char *ofi_straddr(char *buf, size_t *len,
 	const struct sockaddr *sock_addr;
 	const struct sockaddr_in6 *sin6;
 	const struct sockaddr_in *sin;
+	uint64_t sid;
+	uint8_t scope_id;
 	char str[INET6_ADDRSTRLEN + 8];
 	size_t size;
 
@@ -318,7 +320,20 @@ sa_sin6:
 				str, *((uint16_t *)addr + 8), *((uint32_t *)addr + 5));
 		break;
 	case FI_SOCKADDR_IB:
-		size = snprintf(buf, *len, "fi_sockaddr_ib://%p", addr);
+		memset(str, 0, sizeof(str));
+		if (!inet_ntop(AF_INET6, ((uint64_t *)addr + 1), str, INET6_ADDRSTRLEN))
+			return NULL;
+
+		scope_id = ntohll(*((uint64_t *)addr + 5)) & 0xff;
+		sid = ntohll(*((uint64_t *)addr + 3));
+		size = snprintf(buf, *len, "fi_sockaddr_ib://[%s]" /* GID */
+			     ":%" PRIx16 /* P_Key */
+			     ":%" PRIx16 /* port space */
+			     ":%" PRIx8 /* Scope ID */,
+			     str, /* GID */
+			     ntohs(*((uint16_t *)addr + 1)), /* P_Key */
+			     (uint16_t)((sid >> 16) & 0xfff), /* port space */
+				 scope_id);
 		break;
 	case FI_ADDR_PSMX:
 		size = snprintf(buf, *len, "fi_addr_psmx://%" PRIx64,
@@ -457,6 +472,58 @@ static int ofi_str_to_ib_ud(const char *str, void **addr, size_t *len)
 		     (uint8_t *)*addr + 26);
 	if ((ret == 5) && (inet_pton(AF_INET6, gid, *addr) > 0))
 		return FI_SUCCESS;
+
+	free(*addr);
+	return -FI_EINVAL;
+}
+
+static int ofi_str_to_sib(const char *str, void **addr, size_t *len)
+{
+	int ret;
+	char gid[INET6_ADDRSTRLEN];
+	uint16_t ps;
+	uint16_t pkey;
+	uint16_t port;
+	uint64_t scope_id;
+
+	memset(gid, 0, sizeof(gid));
+
+	ret = sscanf(str, "%*[^:]://"
+		     "[%64[^]]]" /* GID */ ":%" SCNx16 /* P_Key */
+		     ":%" SCNx16 /* port space */
+		     ":%" SCNx64 /* Scope ID */
+			 ":%"SCNu16, /* port */
+		     gid, &pkey, &ps, &scope_id, &port);
+	if (ret == 5)
+		goto match;
+
+	ret = sscanf(str, "%*[^:]://"
+		     "[%64[^]]]" /* GID */ ":%" SCNx16 /* P_Key */
+		     ":%" SCNx16 /* port space */
+		     ":%" SCNx64, /* Scope ID */
+		     gid, &pkey, &ps, &scope_id);
+	if (ret == 4)
+	{
+		port = 0;
+		goto match;
+	}
+	return -FI_EINVAL;
+
+match:
+	*len = 48;
+	*addr = calloc(1, *len);
+
+	if (inet_pton(AF_INET6, gid, (uint64_t *)*addr + 1) > 0) {
+		*((unsigned short int *)*addr) = AF_IB;
+		*((uint16_t *)*addr + 1) = htons(pkey);
+		if (ps && port) {
+			*((uint64_t *)*addr + 3) = htonll(((uint64_t) ps << 16) + port);
+			*((uint64_t *)*addr + 4) = htonll(RDMA_IB_IP_PS_MASK |
+			                                  RDMA_IB_IP_PORT_MASK);
+		}
+		*((uint64_t *)*addr + 5) = htonll(scope_id);
+		return FI_SUCCESS;
+	}
 
 	free(*addr);
 	return -FI_EINVAL;
@@ -677,6 +744,7 @@ int ofi_str_toaddr(const char *str, uint32_t *addr_format,
 	case FI_ADDR_EFA:
 		return ofi_str_to_efa(str, addr, len);
 	case FI_SOCKADDR_IB:
+		return ofi_str_to_sib(str, addr, len);
 	case FI_ADDR_GNI:
 	case FI_ADDR_BGQ:
 	case FI_ADDR_MLX:
