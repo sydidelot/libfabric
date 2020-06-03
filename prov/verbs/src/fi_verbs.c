@@ -103,7 +103,7 @@ int vrb_sockaddr_len(struct sockaddr *addr)
 }
 
 static int
-vrb_get_rdma_rai(const char *node, const char *service, uint64_t flags,
+vrb_get_rdmacm_rai(const char *node, const char *service, uint64_t flags,
 		 const struct fi_info *hints, struct rdma_addrinfo **rai)
 {
 	struct rdma_addrinfo rai_hints, *_rai;
@@ -152,6 +152,73 @@ out:
 	if (rai_hints.ai_dst_addr)
 		free(rai_hints.ai_dst_addr);
 	return ret;
+}
+
+static int vrb_get_sib_rai(const char *node, const char *service, uint64_t flags,
+		      const struct fi_info *hints, struct rdma_addrinfo **rai)
+{
+	struct sockaddr_ib *sib;
+	size_t sib_len;
+	char *straddr;
+	uint32_t fmt;
+	int ret;
+	bool has_prefix;
+	const char *prefix = "fi_sockaddr_ib://";
+
+	if (!node)
+		return -FI_EINVAL;
+
+	fmt = ofi_addr_format(node);
+	if (fmt == FI_SOCKADDR_IB)
+		has_prefix = true;
+	else if (fmt == FI_FORMAT_UNSPEC)
+		has_prefix = false;
+	else
+		return -FI_EINVAL;
+
+	if (service) {
+		asprintf(&straddr, "%s%s:%s", has_prefix ? "" : prefix, node, service);
+	} else {
+		asprintf(&straddr, "%s%s", has_prefix ? "" : prefix, node);
+	}
+
+	ret = ofi_str_toaddr(straddr, &fmt, (void **)&sib, &sib_len);
+	free(straddr);
+
+	if (ret || fmt != FI_SOCKADDR_IB) {
+		return -FI_EINVAL;
+	}
+
+	*rai = calloc(1, sizeof(struct rdma_addrinfo));
+	if (*rai == NULL)
+		return -FI_ENOMEM;
+
+	(*rai)->ai_family = AF_IB;
+	(*rai)->ai_port_space = RDMA_PS_IB;
+	(*rai)->ai_qp_type = IBV_QPT_RC;
+
+	if (flags & FI_SOURCE) {
+		(*rai)->ai_flags |= RAI_PASSIVE;
+		(*rai)->ai_src_addr = (void *)sib;
+		(*rai)->ai_src_len = sizeof(struct sockaddr_ib);
+	} else {
+		(*rai)->ai_dst_addr = (void *)sib;
+		(*rai)->ai_dst_len = sizeof(struct sockaddr_ib);
+	}
+
+	ofi_straddr_log(&vrb_prov, FI_LOG_INFO, FI_LOG_FABRIC,
+			"src addr", sib);
+
+	return 0;
+}
+
+int vrb_get_rdma_rai(const char *node, const char *service, uint64_t flags,
+		      const struct fi_info *hints, struct rdma_addrinfo **rai)
+{
+	if (node && hints && hints->addr_format == FI_SOCKADDR_IB)
+		return vrb_get_sib_rai(node, service, flags, hints, rai);
+	else
+		return vrb_get_rdmacm_rai(node, service, flags, hints, rai);
 }
 
 int vrb_get_rai_id(const char *node, const char *service, uint64_t flags,
