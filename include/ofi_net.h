@@ -125,6 +125,14 @@ int ofi_discard_socket(SOCKET sock, size_t len);
 #define AF_IB 27
 #endif
 
+/*  values taken from librdmacm/rdma_cma.h */
+#ifndef RDMA_IB_IP_PS_MASK
+#define RDMA_IB_IP_PS_MASK   0xFFFFFFFFFFFF0000ULL
+#endif
+#ifndef RDMA_IB_IP_PORT_MASK
+#define RDMA_IB_IP_PORT_MASK   0x000000000000FFFFULL
+#endif
+
 #define OFI_ADDRSTRLEN (INET6_ADDRSTRLEN + 50)
 
 union ofi_sock_ip {
