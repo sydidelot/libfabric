@@ -692,15 +692,16 @@ static bool tcpx_tx_pending(struct tcpx_ep *ep)
 
 static int tcpx_mod_epoll(struct tcpx_ep *ep, struct util_wait_fd *wait_fd)
 {
-	uint32_t events;
+	uint32_t events = 0;
 	int ret;
 
 	assert(fastlock_held(&ep->lock));
 	if (ep->pollout_set) {
 		events = (wait_fd->util_wait.wait_obj == FI_WAIT_FD) ?
-			 (OFI_EPOLL_IN | OFI_EPOLL_OUT) : (POLLIN | POLLOUT);
-	} else {
-		events = (wait_fd->util_wait.wait_obj == FI_WAIT_FD) ?
+			 OFI_EPOLL_OUT : POLLOUT;
+	}
+	if (ep->pollin_set) {
+		events |= (wait_fd->util_wait.wait_obj == FI_WAIT_FD) ?
 			 OFI_EPOLL_IN : POLLIN;
 	}
 
@@ -720,9 +721,9 @@ static int tcpx_mod_epoll(struct tcpx_ep *ep, struct util_wait_fd *wait_fd)
  * such as delivery complete acks or RMA read responses.  So,
  * even if this is the Rx CQ, we need to progress transmits.
  * We also need to keep the rx and tx epoll wait fd's in sync,
- * such that we ask for POLLOUT on both or neither.  This is
+ * such that we ask for POLLOUT/POLLIN on both or neither.  This is
  * required in case they share the same wait set and underlying
- * epoll fd.  So we only maintain a single pollout_set state
+ * epoll fd.  So we only maintain a single pollout_set/pollin_set state
  * variable rather than trying to track them independently.
  * The latter does not work if the epoll fd behind the tx
  * and rx CQs is the same fd.
@@ -730,11 +731,17 @@ static int tcpx_mod_epoll(struct tcpx_ep *ep, struct util_wait_fd *wait_fd)
 int tcpx_update_epoll(struct tcpx_ep *ep)
 {
 	struct util_wait_fd *rx_wait, *tx_wait;
+	bool need_pollout;
+	bool need_pollin;
 	int ret;
 
 	assert(fastlock_held(&ep->lock));
-	if ((tcpx_tx_pending(ep) && ep->pollout_set) ||
-	    (!tcpx_tx_pending(ep) && !ep->pollout_set))
+
+	need_pollout =  tcpx_tx_pending(ep);
+	need_pollin = true;
+
+	if (need_pollout == ep->pollout_set &&
+	    need_pollin == ep->pollin_set)
 		return FI_SUCCESS;
 
 	rx_wait = ep->util_ep.rx_cq ?
@@ -744,13 +751,17 @@ int tcpx_update_epoll(struct tcpx_ep *ep)
 		  container_of(ep->util_ep.tx_cq->wait,
 		  	       struct util_wait_fd, util_wait) : NULL;
 
-	ep->pollout_set = tcpx_tx_pending(ep);
+	ep->pollout_set = need_pollout;
+	ep->pollin_set = need_pollin;
+
 	ret = tcpx_mod_epoll(ep, rx_wait);
 	if (!ret && rx_wait != tx_wait)
 		ret = tcpx_mod_epoll(ep, tx_wait);
 
-	if (ret)
+	if (ret) {
 		ep->pollout_set = false;
+		ep->pollin_set = false;
+	}
 	return ret;
 }
 

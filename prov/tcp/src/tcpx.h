@@ -246,6 +246,7 @@ struct tcpx_ep {
 	void (*hdr_bswap)(struct tcpx_base_hdr *hdr);
 	size_t			min_multi_recv_size;
 	bool			pollout_set;
+	bool			pollin_set;
 };
 
 struct tcpx_fabric {
