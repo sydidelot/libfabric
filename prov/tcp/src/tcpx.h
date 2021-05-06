@@ -348,6 +348,8 @@ int tcpx_eq_wait_try_func(void *arg);
 int tcpx_eq_create(struct fid_fabric *fabric_fid, struct fi_eq_attr *attr,
 		   struct fid_eq **eq_fid, void *context);
 
+int tcpx_handle_ack(struct tcpx_ep *ep);
+
 int tcpx_op_invalid(struct tcpx_ep *tcpx_ep);
 int tcpx_op_msg(struct tcpx_ep *tcpx_ep);
 int tcpx_op_read_req(struct tcpx_ep *tcpx_ep);

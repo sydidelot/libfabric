@@ -91,6 +91,7 @@ static int tcpx_recv_msg_data(struct tcpx_ep *ep)
 void tcpx_progress_tx(struct tcpx_ep *ep)
 {
 	struct tcpx_xfer_entry *tx_entry;
+	struct tcpx_cur_rx *cur_rx = &ep->cur_rx;
 	struct tcpx_cq *cq;
 	int ret;
 
@@ -103,18 +104,27 @@ void tcpx_progress_tx(struct tcpx_ep *ep)
 		tx_entry = ep->cur_tx.entry;
 		cq = container_of(ep->util_ep.tx_cq, struct tcpx_cq, util_cq);
 
-		if (ret) {
-			FI_WARN(&tcpx_prov, FI_LOG_DOMAIN, "msg send failed\n");
-			tcpx_cq_report_error(&cq->util_cq, tx_entry, -ret);
-			tcpx_free_xfer(cq, tx_entry);
-		} else {
+		if (ret == 0)
+		{
 			if (tx_entry->flags & TCPX_NEED_ACK) {
 				slist_insert_tail(&tx_entry->entry,
 						  &ep->need_ack_queue);
+
+				if (cur_rx->hdr.base_hdr.op_data == TCPX_OP_ACK) {
+					ret = tcpx_handle_ack(ep);
+					/* We must have a matching rsp */
+					assert(ret != -FI_EAGAIN);
+				}
 			} else {
 				tcpx_cq_report_success(&cq->util_cq, tx_entry);
 				tcpx_free_xfer(cq, tx_entry);
 			}
+		}
+
+		if (ret) {
+			FI_WARN(&tcpx_prov, FI_LOG_DOMAIN, "msg send failed\n");
+			tcpx_cq_report_error(&cq->util_cq, tx_entry, -ret);
+			tcpx_free_xfer(cq, tx_entry);
 		}
 
 		if (!slist_empty(&ep->priority_queue)) {
@@ -409,7 +419,7 @@ static struct tcpx_xfer_entry *tcpx_get_rx_entry(struct tcpx_ep *ep)
 	return xfer;
 }
 
-static int tcpx_handle_ack(struct tcpx_ep *ep)
+int tcpx_handle_ack(struct tcpx_ep *ep)
 {
 	struct tcpx_xfer_entry *tx_entry;
 	struct tcpx_cq *cq;
@@ -418,7 +428,12 @@ static int tcpx_handle_ack(struct tcpx_ep *ep)
 	    sizeof(ep->cur_rx.hdr.base_hdr))
 		return -FI_EIO;
 
-	assert(!slist_empty(&ep->need_ack_queue));
+	if (slist_empty(&ep->need_ack_queue))
+	{
+		/* Early response */
+		return -FI_EAGAIN;
+	}
+
 	tx_entry = container_of(slist_remove_head(&ep->need_ack_queue),
 				struct tcpx_xfer_entry, entry);
 
