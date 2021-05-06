@@ -58,6 +58,16 @@ void tcpx_cq_progress(struct util_cq *cq)
 				  util_ep.ep_fid.fid);
 
 		fastlock_acquire(&ep->lock);
+
+		if (ofi_uring_initialized(&ep->bsock.uring)) {
+			ofi_uring_progress(&ep->bsock.uring);
+
+			if (ep->bsock.su_ctx.state == OFI_URING_DONE)
+				tcpx_progress_tx(ep);
+			if (ep->bsock.ru_ctx.state == OFI_URING_DONE)
+				tcpx_progress_rx(ep);
+		}
+
 		/* We need to progress receives in the case where we're waiting
 		 * on the application to post a buffer to consume a receive
 		 * that we've already read from the kernel.  If the message is
@@ -101,6 +111,10 @@ void tcpx_cq_progress(struct util_cq *cq)
 			tcpx_progress_rx(ep);
 		if (events[i].events & outevent)
 			tcpx_progress_tx(ep);
+
+		/* We need to update epoll as we might have polled our ring already and
+		 * we don't monitor socket's POLLIN event anymore */
+		(void) tcpx_update_epoll(ep);
 		fastlock_release(&ep->lock);
 	}
 unlock:

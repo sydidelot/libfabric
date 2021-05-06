@@ -737,8 +737,11 @@ int tcpx_update_epoll(struct tcpx_ep *ep)
 
 	assert(fastlock_held(&ep->lock));
 
-	need_pollout =  tcpx_tx_pending(ep);
-	need_pollin = true;
+	/* If uring is already busy, the CQE event will wake us when it will
+	 * complete */
+	need_pollout = ofi_uring_ctx_state(&ep->bsock.su_ctx) != OFI_URING_BUSY &&
+			tcpx_tx_pending(ep);
+	need_pollin = ofi_uring_ctx_state(&ep->bsock.ru_ctx) != OFI_URING_BUSY;
 
 	if (need_pollout == ep->pollout_set &&
 	    need_pollin == ep->pollin_set)
