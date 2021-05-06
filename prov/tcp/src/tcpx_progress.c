@@ -50,6 +50,10 @@ static int tcpx_send_msg(struct tcpx_ep *ep)
 	size_t len;
 
 	assert(ep->cur_tx.entry);
+
+	if (!ep->cur_tx.data_left)
+		return FI_SUCCESS;
+
 	tx_entry = ep->cur_tx.entry;
 	ret = ofi_bsock_sendv(&ep->bsock, tx_entry->iov, tx_entry->iov_cnt,
 			      &len);
