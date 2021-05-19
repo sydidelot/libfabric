@@ -45,11 +45,16 @@ void tcpx_cq_progress(struct util_cq *cq)
 	struct util_wait_fd *wait_fd;
 	struct dlist_entry *item;
 	struct tcpx_ep *ep;
+	struct tcpx_domain *domain;
 	struct fid *fid;
 	uint32_t inevent, outevent;
 	int nfds, i;
 
 	wait_fd = container_of(cq->wait, struct util_wait_fd, util_wait);
+	domain = container_of(cq->domain, struct tcpx_domain,
+		      util_domain);
+
+	tcpx_domain_uring_progress(domain);
 
 	cq->cq_fastlock_acquire(&cq->ep_list_lock);
 	dlist_foreach(&cq->ep_list, item) {
@@ -59,14 +64,10 @@ void tcpx_cq_progress(struct util_cq *cq)
 
 		fastlock_acquire(&ep->lock);
 
-		if (ofi_uring_initialized(&ep->bsock.uring)) {
-			ofi_uring_progress(&ep->bsock.uring);
-
-			if (ep->bsock.su_ctx.state == OFI_URING_DONE)
-				tcpx_progress_tx(ep);
-			if (ep->bsock.ru_ctx.state == OFI_URING_DONE)
-				tcpx_progress_rx(ep);
-		}
+		if (ofi_uring_ctx_state(&ep->bsock.su_ctx) == OFI_URING_DONE)
+			tcpx_progress_tx(ep);
+		if (ofi_uring_ctx_state(&ep->bsock.ru_ctx) == OFI_URING_DONE)
+			tcpx_progress_rx(ep);
 
 		/* We need to progress receives in the case where we're waiting
 		 * on the application to post a buffer to consume a receive
@@ -119,6 +120,8 @@ void tcpx_cq_progress(struct util_cq *cq)
 	}
 unlock:
 	cq->cq_fastlock_release(&cq->ep_list_lock);
+
+	tcpx_domain_uring_submit(domain);
 }
 
 static int tcpx_cq_close(struct fid *fid)

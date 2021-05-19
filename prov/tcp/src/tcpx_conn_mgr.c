@@ -136,6 +136,10 @@ static int tcpx_ep_enable(struct tcpx_ep *ep,
 
 {
 	int ret = 0;
+	struct tcpx_domain *domain;
+
+	domain = container_of(ep->util_ep.domain, struct tcpx_domain,
+			      util_domain);
 
 	if (!ep->util_ep.rx_cq && !ep->util_ep.tx_cq) {
 		FI_WARN(&tcpx_prov, FI_LOG_EP_CTRL,
@@ -165,9 +169,9 @@ static int tcpx_ep_enable(struct tcpx_ep *ep,
 			return ret;
 		}
 
-		if (ofi_bsock_uring_initialized(&ep->bsock)) {
+		if (ofi_uring_initialized(&domain->uring)) {
 			ret = ofi_wait_add_fd(ep->util_ep.rx_cq->wait,
-					      ofi_bsock_uring_fd(&ep->bsock),
+					      ofi_uring_fd(&domain->uring),
 					      POLLIN, tcpx_try_func,
 					      (void *) &ep->util_ep,
 					      &ep->util_ep.ep_fid.fid);
@@ -190,10 +194,10 @@ static int tcpx_ep_enable(struct tcpx_ep *ep,
 			return ret;
 		}
 
-		if (ofi_bsock_uring_initialized(&ep->bsock))
+		if (ofi_uring_initialized(&domain->uring))
 		{
 			ret = ofi_wait_add_fd(ep->util_ep.tx_cq->wait,
-					      ofi_bsock_uring_fd(&ep->bsock),
+					      ofi_uring_fd(&domain->uring),
 					      POLLIN, tcpx_try_func,
 					      (void *) &ep->util_ep,
 					      &ep->util_ep.ep_fid.fid);

@@ -413,7 +413,6 @@ struct ofi_bsock {
 	struct ofi_byteq sq;
 	struct ofi_byteq rq;
 
-	struct ofi_uring uring;
 	struct ofi_uring_ctx su_ctx;
 	struct ofi_uring_ctx ru_ctx;
 
@@ -427,7 +426,6 @@ ofi_bsock_init(struct ofi_bsock *bsock, ssize_t sbuf_size, ssize_t rbuf_size)
 	bsock->sock = INVALID_SOCKET;
 	ofi_byteq_init(&bsock->sq, sbuf_size);
 	ofi_byteq_init(&bsock->rq, rbuf_size);
-	bsock->uring.initialized = false;
 }
 
 static inline size_t ofi_bsock_readable(struct ofi_bsock *bsock)
@@ -454,60 +452,25 @@ bool ofi_bsock_cancel_tx(struct ofi_bsock *bsock);
 bool ofi_bsock_cancel_rx(struct ofi_bsock *bsock);
 
 #ifdef HAVE_LIBURING
-static ofi_uring_sqe_t *
-ofi_bsock_uring_get_sqe_func(void *arg)
+static inline void
+ofi_bsock_uring_init(struct ofi_bsock *bsock, struct ofi_uring *uring)
 {
-	struct ofi_bsock *bsock = (struct ofi_bsock *)arg;
-
-	return ofi_uring_get_sqe(&bsock->uring);
-}
-
-static inline int
-ofi_bsock_uring_init(struct ofi_bsock *bsock)
-{
-	int ret;
-
-	/* The io_uring needs 4 entries: 2 for TX/RX and
-	 * 2 additional for TX/RX cancellation */
-	ret = ofi_uring_init(&bsock->uring, 4, ofi_bsock_uring_get_sqe_func, bsock);
-	if (ret)
-		return ret;
-
-	ofi_uring_ctx_init(&bsock->su_ctx, &bsock->uring);
-	ofi_uring_ctx_init(&bsock->ru_ctx, &bsock->uring);
-	ofi_uring_ctx_init(&bsock->su_cancel_ctx, &bsock->uring);
-	ofi_uring_ctx_init(&bsock->ru_cancel_ctx, &bsock->uring);
-	return 0;
+	ofi_uring_ctx_init(&bsock->su_ctx, uring);
+	ofi_uring_ctx_init(&bsock->ru_ctx, uring);
+	ofi_uring_ctx_init(&bsock->su_cancel_ctx, uring);
+	ofi_uring_ctx_init(&bsock->ru_cancel_ctx, uring);
 }
 
 static inline void
 ofi_bsock_uring_destroy(struct ofi_bsock *bsock)
 {
-	if (ofi_uring_initialized(&bsock->uring)) {
-		ofi_uring_exit(&bsock->uring);
-		bsock->uring.initialized = false;
-
-		ofi_uring_ctx_init(&bsock->su_ctx, NULL);
-		ofi_uring_ctx_init(&bsock->ru_ctx, NULL);
-		ofi_uring_ctx_init(&bsock->su_cancel_ctx, NULL);
-		ofi_uring_ctx_init(&bsock->ru_cancel_ctx, NULL);
-	}
-	assert(!bsock->uring.initialized);
-}
-
-static inline bool
-ofi_bsock_uring_initialized(struct ofi_bsock *bsock)
-{
-	return bsock->uring.initialized;
-}
-
-static inline int
-ofi_bsock_uring_fd(struct ofi_bsock *bsock)
-{
-    return bsock->uring.ring.ring_fd;
+	ofi_uring_ctx_init(&bsock->su_ctx, NULL);
+	ofi_uring_ctx_init(&bsock->ru_ctx, NULL);
+	ofi_uring_ctx_init(&bsock->su_cancel_ctx, NULL);
+	ofi_uring_ctx_init(&bsock->ru_cancel_ctx, NULL);
 }
 #else
-#define ofi_bsock_uring_init(bsock, uring) -FI_ENOSYS
+#define ofi_bsock_uring_init(bsock, uring)
 #define ofi_bsock_uring_destroy(bsock)
 #endif
 

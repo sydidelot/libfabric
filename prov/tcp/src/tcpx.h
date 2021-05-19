@@ -68,6 +68,7 @@
 #define MAX_POLL_EVENTS		100
 #define TCPX_MIN_MULTI_RECV	16384
 #define TCPX_PORT_MAX_RANGE	(USHRT_MAX)
+#define TCPX_URING_ENTRIES  1024 /* TODO make it tunable */
 
 extern struct fi_provider	tcpx_prov;
 extern struct util_prov		tcpx_util_prov;
@@ -279,6 +280,7 @@ struct tcpx_xfer_entry {
 struct tcpx_domain {
 	struct util_domain		util_domain;
 	struct ofi_ops_dynamic_rbuf	*dynamic_rbuf;
+	struct ofi_uring uring;
 };
 
 static inline struct ofi_ops_dynamic_rbuf *tcpx_dynamic_rbuf(struct tcpx_ep *ep)
@@ -315,7 +317,9 @@ int tcpx_set_port_range(void);
 
 int tcpx_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 		     struct fid_domain **domain, void *context);
-
+void tcpx_domain_uring_progress(struct tcpx_domain *domain);
+void tcpx_domain_uring_submit(struct tcpx_domain *domain);
+ofi_uring_sqe_t *tcpx_domain_uring_get_sqe_func(void *arg);
 
 int tcpx_endpoint(struct fid_domain *domain, struct fi_info *info,
 		  struct fid_ep **ep_fid, void *context);

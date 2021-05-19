@@ -1312,7 +1312,6 @@ ssize_t ofi_uring_send(SOCKET sock, struct ofi_uring_ctx *uctx,
 	io_uring_prep_send(sqe, sock, buf, len, 0);
 	io_uring_sqe_set_data(sqe, uctx);
 
-	ofi_uring_submit(uctx->uring);
 	uctx->state = OFI_URING_BUSY;
 
 	return 0;
@@ -1347,7 +1346,6 @@ ssize_t ofi_uring_sendv(SOCKET sock, struct ofi_uring_ctx *uctx,
 	io_uring_prep_sendmsg(sqe, sock, &uctx->msg, 0);
 	io_uring_sqe_set_data(sqe, uctx);
 
-	ofi_uring_submit(uctx->uring);
 	uctx->state = OFI_URING_BUSY;
 
 	return 0;
@@ -1371,7 +1369,6 @@ ssize_t ofi_uring_recv(SOCKET sock, struct ofi_uring_ctx *uctx,
 	io_uring_prep_recv(sqe, sock, buf, len, 0);
 	io_uring_sqe_set_data(sqe, uctx);
 
-	ofi_uring_submit(uctx->uring);
 	uctx->state = OFI_URING_BUSY;
 
 eagain:
@@ -1407,7 +1404,6 @@ ssize_t ofi_uring_recvv(SOCKET sock, struct ofi_uring_ctx *uctx, struct iovec *i
 	io_uring_prep_sendmsg(sqe, sock, &uctx->msg, 0);
 	io_uring_sqe_set_data(sqe, uctx);
 
-	ofi_uring_submit(uctx->uring);
 	uctx->state = OFI_URING_BUSY;
 
 eagain:
@@ -1437,7 +1433,6 @@ bool ofi_uring_cancel(struct ofi_uring_ctx *uctx,
 	io_uring_prep_cancel(sqe, uctx, 0);
 	io_uring_sqe_set_data(sqe, uctx_to_cancel);
 
-	ofi_uring_submit(uctx->uring);
 	return false;
 }
 #endif
