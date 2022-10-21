@@ -45,6 +45,57 @@
 
 static ssize_t (*xnet_start_op[ofi_op_write + 1])(struct xnet_ep *ep);
 
+#ifdef HAVE_LIBURING
+static int xnet_init_io_uring(struct xnet_io_uring *io_uring, size_t nents)
+{
+	struct io_uring_params params;
+	int ret;
+
+	assert(xnet_io_uring);
+	memset(&params, 0, sizeof(params));
+	ret = io_uring_queue_init_params(entries, &io_uring->ring, &params);
+	if (ret)
+		return -errno;
+
+	/* FAST_POOL is required by the provider */
+	if (!(params.features & IORING_FEAT_FAST_POLL)) {
+		io_uring_queue_exit(&io_uring->ring);
+		return -FI_ENOSYS;
+	}
+
+	assert(!io_uring_sq_ready(&io_uring->ring));
+	assert(!io_uring_cq_ready(&io_uring->ring));
+	assert(io_uring_sq_space_left(&io_uring->ring) >= entries);
+
+	/* io_uring rounds up the number of entries to the next power of 2,
+	 * so we could get more entries than initially
+	 */
+	entries = io_uring_sq_space_left(&io_uring->ring);
+
+	io_uring->fid.fclass = XNET_CLASS_IO_URING;
+	io_uring->credits = io_uring_sq_space_left(&io_uring->ring);
+	return 0;
+}
+
+static void xnet_destroy_io_uring(struct xnet_io_uring *io_uring)
+{
+	assert(xnet_io_uring);
+	assert(!io_uring_sq_ready(&io_uring->ring));
+	assert(io_uring_sq_space_left(&io_uring->ring) == io_uring->credits);
+	assert(!io_uring_cq_ready(&io_uring->ring));
+	io_uring_queue_exit(&io_uring->ring);
+}
+
+static int xnet_io_uring_fd(struct xnet_io_uring *io_uring)
+{
+	assert(xnet_io_uring);
+	return io_uring->ring.ring_fd;
+}
+#else
+#define xnet_init_io_uring(io_uring, entries) -FI_ENOSYS
+#define xnet_destroy_io_uring(io_uring) do {} while(0)
+#define xnet_io_uring_fd(io_uring) INVALID_SOCKET
+#endif
 
 static void xnet_update_pollflag(struct xnet_ep *ep, short pollflag, bool set)
 {
@@ -1081,8 +1132,42 @@ int xnet_init_progress(struct xnet_progress *progress, struct fi_info *info)
 	if (ret)
 		goto err4;
 
-	return 0;
+	if (xnet_io_uring) {
+		ret = xnet_init_io_uring(&progress->tx_io_uring,
+					 info ? info->tx_attr->size :
+						xnet_default_tx_size);
+		if (ret)
+			goto err5;
 
+		ret = ofi_dynpoll_add(&progress->epoll_fd,
+				      xnet_io_uring_fd(&progress->tx_io_uring),
+				      POLLIN, &progress->tx_io_uring.fid);
+		if (ret)
+			goto err6;
+
+		ret = xnet_init_io_uring(&progress->rx_io_uring,
+					 info ? info->rx_attr->size :
+						xnet_default_rx_size);
+		if (ret)
+			goto err7;
+
+		ret = ofi_dynpoll_add(&progress->epoll_fd,
+				      xnet_io_uring_fd(&progress->rx_io_uring),
+				      POLLIN, &progress->rx_io_uring.fid);
+		if (ret)
+			goto err8;
+	}
+
+	return 0;
+err8:
+	xnet_destroy_io_uring(&progress->rx_io_uring);
+err7:
+	ofi_dynpoll_del(&progress->epoll_fd,
+			xnet_io_uring_fd(&progress->tx_io_uring));
+err6:
+	xnet_destroy_io_uring(&progress->tx_io_uring);
+err5:
+	ofi_dynpoll_del(&progress->epoll_fd, progress->signal.fd[FI_READ_FD]);
 err4:
 	ofi_bufpool_destroy(progress->xfer_pool);
 err3:
@@ -1101,6 +1186,14 @@ void xnet_close_progress(struct xnet_progress *progress)
 	assert(dlist_empty(&progress->unexp_tag_list));
 	assert(slist_empty(&progress->event_list));
 	xnet_stop_progress(progress);
+	if (xnet_io_uring) {
+		ofi_dynpoll_del(&progress->epoll_fd,
+				xnet_io_uring_fd(&progress->rx_io_uring));
+		xnet_destroy_io_uring(&progress->rx_io_uring);
+		ofi_dynpoll_del(&progress->epoll_fd,
+				xnet_io_uring_fd(&progress->tx_io_uring));
+		xnet_destroy_io_uring(&progress->tx_io_uring);
+	}
 	ofi_dynpoll_close(&progress->epoll_fd);
 	ofi_bufpool_destroy(progress->xfer_pool);
 	ofi_genlock_destroy(&progress->lock);
