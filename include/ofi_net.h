@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2013-2018 Intel Corporation. All rights reserved.
  * Copyright (c) 2016 Cisco Systems, Inc. All rights reserved.
+ * Copyright (c) 2022 DataDirect Networks, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -121,6 +122,38 @@ static inline int ofi_sendall_socket(SOCKET sock, const void *buf, size_t len)
 	}
 
 	return (size_t) sent != len;
+}
+
+static inline ssize_t
+ofi_sendv_socket(SOCKET sock, const struct iovec *iov, size_t cnt, int flags)
+{
+	struct msghdr msg;
+
+	msg.msg_control = NULL;
+	msg.msg_controllen = 0;
+	msg.msg_flags = 0;
+	msg.msg_name = NULL;
+	msg.msg_namelen = 0;
+	msg.msg_iov = (struct iovec *) iov;
+	msg.msg_iovlen = cnt;
+
+	return ofi_sendmsg_tcp(sock, &msg, flags);
+}
+
+static inline ssize_t
+ofi_recvv_socket(SOCKET sock, struct iovec *iov, size_t cnt, int flags)
+{
+	struct msghdr msg;
+
+	msg.msg_control = NULL;
+	msg.msg_controllen = 0;
+	msg.msg_flags = 0;
+	msg.msg_name = NULL;
+	msg.msg_namelen = 0;
+	msg.msg_iov = iov;
+	msg.msg_iovlen = cnt;
+
+	return ofi_recvmsg_tcp(sock, &msg, flags);
 }
 
 ssize_t ofi_discard_socket(SOCKET sock, size_t len);
