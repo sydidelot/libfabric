@@ -45,8 +45,27 @@
 
 static ssize_t (*xnet_start_op[ofi_op_write + 1])(struct xnet_ep *ep);
 
+static struct ofi_sockapi xnet_sockapi_iouring =
+{
+	.send = ofi_sockapi_send_iouring,
+	.sendv = ofi_sockapi_sendv_iouring,
+	.recv = ofi_sockapi_recv_socket,
+	.recvv = ofi_sockapi_recvv_socket,
+};
+
+static struct ofi_sockapi xnet_sockapi_socket =
+{
+	.send = ofi_sockapi_send_socket,
+	.sendv = ofi_sockapi_sendv_socket,
+	.recv = ofi_sockapi_recv_socket,
+	.recvv = ofi_sockapi_recvv_socket,
+};
+
 #ifdef HAVE_LIBURING
-static int xnet_init_io_uring(struct xnet_io_uring *io_uring, size_t nents)
+static void xnet_progress_tx(struct xnet_ep *ep);
+static void xnet_complete_tx(struct xnet_ep *ep, ssize_t ret);
+
+static int xnet_init_io_uring(struct xnet_io_uring *io_uring, size_t entries)
 {
 	struct io_uring_params params;
 	int ret;
@@ -67,12 +86,10 @@ static int xnet_init_io_uring(struct xnet_io_uring *io_uring, size_t nents)
 	assert(!io_uring_cq_ready(&io_uring->ring));
 	assert(io_uring_sq_space_left(&io_uring->ring) >= entries);
 
-	/* io_uring rounds up the number of entries to the next power of 2,
-	 * so we could get more entries than initially
-	 */
-	entries = io_uring_sq_space_left(&io_uring->ring);
-
 	io_uring->fid.fclass = XNET_CLASS_IO_URING;
+	/* io_uring rounds up the number of entries to the next power of 2,
+	 * so we could get more entries than initially requested.
+	 */
 	io_uring->credits = io_uring_sq_space_left(&io_uring->ring);
 	return 0;
 }
@@ -91,10 +108,94 @@ static int xnet_io_uring_fd(struct xnet_io_uring *io_uring)
 	assert(xnet_io_uring);
 	return io_uring->ring.ring_fd;
 }
+
+static bool xnet_io_uring_needs_submit(struct xnet_io_uring *io_uring)
+{
+	return io_uring_sq_ready(&io_uring->ring);
+}
+
+static void xnet_submit_io_uring(struct xnet_io_uring *io_uring)
+{
+	if (xnet_io_uring && io_uring_sq_ready(&io_uring->ring))
+		io_uring_submit(&io_uring->ring);
+}
+
+static bool xnet_get_io_uring_credit(struct xnet_io_uring *io_uring)
+{
+	if (!xnet_io_uring)
+		return true;
+
+	if (io_uring->credits > 0) {
+		io_uring->credits--;
+		return true;
+	}
+	return false;
+}
+
+static void xnet_progress_cqe(struct xnet_io_uring *io_uring,
+			      struct io_uring_cqe *cqe)
+{
+	struct xnet_xfer_entry *tx_entry;
+	struct ofi_bsock *bsock;
+	struct xnet_ep *ep;
+
+	assert(xnet_io_uring);
+	bsock = (struct ofi_bsock *) cqe->user_data;
+	assert(bsock);
+
+	if (&io_uring->ring == bsock->sockapi->tx_io_uring)
+	{
+		ep = container_of(bsock, struct xnet_ep, bsock);
+		tx_entry = ep->cur_tx.entry;
+		assert(tx_entry);
+		assert(ep->cur_tx.io_uring_busy);
+
+		ep->cur_tx.io_uring_busy = false;
+		if (cqe->res < 0) {
+			if (!OFI_SOCK_TRY_SND_RCV_AGAIN(-cqe->res))
+				xnet_complete_tx(ep, cqe->res);
+		} else {
+			ep->cur_tx.data_left -= cqe->res;
+			if (ep->cur_tx.data_left)
+				ofi_consume_iov(tx_entry->iov, &tx_entry->iov_cnt,
+						cqe->res);
+			else
+				xnet_complete_tx(ep, FI_SUCCESS);
+		}
+		xnet_progress_tx(ep);
+	}
+}
+
+static void xnet_progress_io_uring(struct xnet_io_uring *io_uring)
+{
+	struct io_uring_cqe *cqes[XNET_MAX_EVENTS];
+	int nready;
+	int i;
+
+	if (!xnet_io_uring)
+		return;
+
+	nready = io_uring_peek_batch_cqe(&io_uring->ring, cqes, XNET_MAX_EVENTS);
+	if (!nready)
+		return;
+
+	assert(nready <= XNET_MAX_EVENTS);
+	for (i = 0; i < nready; i++) {
+		xnet_progress_cqe(io_uring, cqes[i]);
+		io_uring->credits++;
+	}
+
+	io_uring_cq_advance(&io_uring->ring, nready);
+}
 #else
 #define xnet_init_io_uring(io_uring, entries) -FI_ENOSYS
 #define xnet_destroy_io_uring(io_uring) do {} while(0)
 #define xnet_io_uring_fd(io_uring) INVALID_SOCKET
+#define xnet_submit_io_uring(io_uring)
+#define xnet_io_uring_needs_submit(io_uring) false
+#define xnet_get_io_uring_credit(io_uring) true
+#define xnet_put_io_uring_credit(io_uring) do {} while(0)
+#define xnet_progress_io_uring(io_uring) do {} while(0)
 #endif
 
 static void xnet_update_pollflag(struct xnet_ep *ep, short pollflag, bool set)
@@ -128,13 +229,20 @@ static ssize_t xnet_send_msg(struct xnet_ep *ep)
 
 	assert(xnet_progress_locked(xnet_ep2_progress(ep)));
 	assert(ep->cur_tx.entry);
+	if (!xnet_get_io_uring_credit(&xnet_ep2_progress(ep)->tx_io_uring))
+		return -FI_EAGAIN;
+
 	tx_entry = ep->cur_tx.entry;
 	ret = ofi_bsock_sendv(&ep->bsock, tx_entry->iov, tx_entry->iov_cnt,
 			      &len);
-	if (ret < 0 && ret != -FI_EINPROGRESS)
+	if (ret >= 0)
+		len = ret;
+	else if (ret == -FI_EIOURING_PREP) {
+		assert(!ep->cur_tx.io_uring_busy);
+		ep->cur_tx.io_uring_busy = true;
 		return ret;
-
-	if (ret == -FI_EINPROGRESS) {
+	}
+	else if (ret == -FI_EINPROGRESS) {
 		/* If a transfer generated multiple async sends, we only
 		 * need to track the last async index to know when the entire
 		 * transfer has completed.
@@ -142,7 +250,7 @@ static ssize_t xnet_send_msg(struct xnet_ep *ep)
 		tx_entry->async_index = ep->bsock.async_index;
 		tx_entry->ctrl_flags |= XNET_ASYNC;
 	} else {
-		len = ret;
+		return ret;
 	}
 
 	ep->cur_tx.data_left -= len;
@@ -237,10 +345,15 @@ static void xnet_progress_tx(struct xnet_ep *ep)
 	ssize_t ret;
 
 	assert(xnet_progress_locked(xnet_ep2_progress(ep)));
-	while (ep->cur_tx.entry) {
+	while (ep->cur_tx.entry && !ep->cur_tx.io_uring_busy) {
 		ret = xnet_send_msg(ep);
 		if (OFI_SOCK_TRY_SND_RCV_AGAIN(-ret)) {
 			xnet_update_pollflag(ep, POLLOUT, true);
+			return;
+		}
+		if (ret == -FI_EIOURING_PREP) {
+			assert(ep->cur_tx.io_uring_busy);
+			xnet_update_pollflag(ep, POLLOUT, false);
 			return;
 		}
 
@@ -251,7 +364,8 @@ static void xnet_progress_tx(struct xnet_ep *ep)
 	 * have other data to send, we need to try flushing any buffered data.
 	 */
 	(void) ofi_bsock_flush(&ep->bsock);
-	xnet_update_pollflag(ep, POLLOUT, ofi_bsock_tosend(&ep->bsock));
+	xnet_update_pollflag(ep, POLLOUT, ofi_bsock_tosend(&ep->bsock) ||
+					  !ep->cur_tx.io_uring_busy);
 }
 
 static int xnet_queue_ack(struct xnet_xfer_entry *rx_entry)
@@ -801,6 +915,7 @@ void xnet_tx_queue_insert(struct xnet_ep *ep,
 		OFI_DBG_SET(tx_entry->hdr.base_hdr.id, ep->tx_id++);
 		ep->hdr_bswap(&tx_entry->hdr.base_hdr);
 		xnet_progress_tx(ep);
+		xnet_progress_io_uring(&xnet_ep2_progress(ep)->tx_io_uring);
 	} else if (tx_entry->ctrl_flags & XNET_INTERNAL_XFER) {
 		slist_insert_tail(&tx_entry->entry, &ep->priority_queue);
 	} else {
@@ -867,6 +982,9 @@ xnet_handle_events(struct xnet_progress *progress,
 		case FI_CLASS_CONNREQ:
 			xnet_run_conn(events[i].data.ptr, pin, pout, perr);
 			break;
+		case XNET_CLASS_IO_URING:
+			xnet_progress_io_uring(events[i].data.ptr);
+			break;
 		default:
 			assert(fid->fclass == XNET_CLASS_PROGRESS);
 			if (clear_signal)
@@ -876,6 +994,8 @@ xnet_handle_events(struct xnet_progress *progress,
 	}
 
 	xnet_handle_event_list(progress);
+	xnet_submit_io_uring(&progress->tx_io_uring);
+	xnet_submit_io_uring(&progress->rx_io_uring);
 }
 
 void xnet_progress_unexp(struct xnet_progress *progress,
@@ -958,6 +1078,10 @@ int xnet_progress_wait(struct xnet_progress *progress, int timeout)
 {
 	struct ofi_epollfds_event event;
 
+	/* We cannot enter blocking if io_uring has entries
+	 * that need submission. */
+	assert(xnet_io_uring_needs_submit(&progress->tx_io_uring));
+	assert(xnet_io_uring_needs_submit(&progress->rx_io_uring));
 	return ofi_dynpoll_wait(&progress->epoll_fd, &event, 1, timeout);
 }
 
@@ -1162,6 +1286,12 @@ int xnet_init_progress(struct xnet_progress *progress, struct fi_info *info)
 				      POLLIN, &progress->rx_io_uring.fid);
 		if (ret)
 			goto err8;
+
+		progress->sockapi = xnet_sockapi_iouring;
+		progress->sockapi.tx_io_uring = &progress->tx_io_uring.ring;
+		progress->sockapi.rx_io_uring = &progress->rx_io_uring.ring;
+	} else {
+		progress->sockapi = xnet_sockapi_socket;
 	}
 
 	return 0;

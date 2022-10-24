@@ -155,6 +155,7 @@ struct xnet_cur_rx {
 
 struct xnet_cur_tx {
 	size_t			data_left;
+	bool			io_uring_busy;
 	struct xnet_xfer_entry	*entry;
 };
 
@@ -253,6 +254,7 @@ struct xnet_io_uring
 {
 	struct fid fid;
 	ofi_io_uring_t ring;
+	size_t credits;
 };
 
 /* Serialization is handled at the progress instance level, using the
@@ -300,6 +302,7 @@ struct xnet_progress {
 
 	struct xnet_io_uring	tx_io_uring;
 	struct xnet_io_uring	rx_io_uring;
+	struct ofi_sockapi	sockapi;
 
 	struct ofi_dynpoll	epoll_fd;
 
