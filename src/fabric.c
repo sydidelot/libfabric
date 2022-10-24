@@ -1373,6 +1373,8 @@ static const char *const errstr[] = {
 	[FI_ENOAV - FI_ERRNO_OFFSET] = "Missing or unavailable address vector",
 	[FI_EOVERRUN - FI_ERRNO_OFFSET] = "Queue has been overrun",
 	[FI_ENORX - FI_ERRNO_OFFSET] = "Receiver not ready, no receive buffers available",
+	[FI_EIOURING_PREP - FI_ERRNO_OFFSET] = "io_uring operation prepared, waiting for submission",
+	[FI_EIOURING_FULL - FI_ERRNO_OFFSET] = "io_uring full",
 };
 
 __attribute__((visibility ("default"),EXTERNALLY_VISIBLE))
