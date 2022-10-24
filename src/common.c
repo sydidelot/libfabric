@@ -1154,6 +1154,9 @@ ssize_t ofi_bsock_flush(struct ofi_bsock *bsock)
 				   &bsock->sq.data[bsock->sq.head],
 				   avail, MSG_NOSIGNAL, bsock);
 	if (ret < 0) {
+		if (ret == -FI_EIOURING_PREP)
+		    return ret;
+
 		err = ofi_sockerr();
 		if (err == EPIPE)
 			return -FI_ENOTCONN;
@@ -1189,6 +1192,8 @@ ssize_t ofi_bsock_send(struct ofi_bsock *bsock, const void *buf, size_t *len)
 	if (*len > bsock->zerocopy_size) {
 		ret = bsock->sockapi->send(bsock->sockapi, bsock->sock, buf, *len,
 					   MSG_NOSIGNAL | OFI_ZEROCOPY, bsock);
+		if (ret == -FI_EIOURING_PREP)
+			return ret;
 		if (ret >= 0) {
 			bsock->async_index++;
 			*len = ret;
@@ -1197,6 +1202,8 @@ ssize_t ofi_bsock_send(struct ofi_bsock *bsock, const void *buf, size_t *len)
 	} else {
 		ret = bsock->sockapi->send(bsock->sockapi, bsock->sock, buf, *len,
 					   MSG_NOSIGNAL, bsock);
+		if (ret == -FI_EIOURING_PREP)
+			return ret;
 	}
 	if (ret < 0) {
 		if (OFI_SOCK_TRY_SND_RCV_AGAIN(ofi_sockerr()) &&
@@ -1240,6 +1247,8 @@ ssize_t ofi_bsock_sendv(struct ofi_bsock *bsock, const struct iovec *iov,
 	if (*len > bsock->zerocopy_size) {
 		ret = bsock->sockapi->sendv(bsock->sockapi, bsock->sock, iov, cnt,
 					    MSG_NOSIGNAL | OFI_ZEROCOPY, bsock);
+		if (ret == -FI_EIOURING_PREP)
+			return ret;
 		if (ret >= 0) {
 			bsock->async_index++;
 			*len = ret;
@@ -1248,6 +1257,8 @@ ssize_t ofi_bsock_sendv(struct ofi_bsock *bsock, const struct iovec *iov,
 	} else {
 		ret = bsock->sockapi->sendv(bsock->sockapi, bsock->sock, iov, cnt,
 					    MSG_NOSIGNAL, bsock);
+		if (ret == -FI_EIOURING_PREP)
+			return ret;
 	}
 	if (ret < 0) {
 		if (OFI_SOCK_TRY_SND_RCV_AGAIN(ofi_sockerr()) &&
@@ -1297,6 +1308,7 @@ ssize_t ofi_bsock_recv(struct ofi_bsock *bsock, void *buf, size_t len)
 		return bytes + ret;
 
 out:
+	assert(ret != -FI_EIOURING_PREP);
 	if (bytes)
 		return bytes;
 	return ret ? -ofi_sockerr(): -FI_ENOTCONN;
@@ -1348,6 +1360,7 @@ ssize_t ofi_bsock_recvv(struct ofi_bsock *bsock, struct iovec *iov, size_t cnt)
 	if (ret > 0)
 		return ret;
 out:
+	assert(ret != -FI_EIOURING_PREP);
 	if (bytes)
 		return bytes;
 	return ret ? -ofi_sockerr(): -FI_ENOTCONN;
