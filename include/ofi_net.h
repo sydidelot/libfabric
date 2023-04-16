@@ -156,7 +156,6 @@ struct ofi_sockctx {
 
 struct ofi_sockapi_uring {
 	ofi_io_uring_t *io_uring;
-	uint64_t credits;
 };
 
 struct ofi_sockapi {

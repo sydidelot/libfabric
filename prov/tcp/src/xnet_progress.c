@@ -1050,7 +1050,6 @@ static void xnet_uring_run_conn(struct xnet_conn_handle *conn, int res)
 }
 
 static void xnet_progress_cqe(struct xnet_progress *progress,
-			      struct xnet_uring *uring,
 			      ofi_io_uring_cqe_t *cqe)
 {
 	struct ofi_sockctx *sockctx;
@@ -1063,7 +1062,6 @@ static void xnet_progress_cqe(struct xnet_progress *progress,
 	assert(sockctx);
 	assert(sockctx->uring_sqe_inuse);
 	sockctx->uring_sqe_inuse = false;
-	uring->sockapi->credits++;
 
 	fid = sockctx->context;
 	if (fid->fclass == FI_CLASS_EP) {
@@ -1091,7 +1089,7 @@ static void xnet_progress_uring(struct xnet_progress *progress,
 
 	assert(nready <= XNET_MAX_EVENTS);
 	for (i = 0; i < nready; i++) {
-		xnet_progress_cqe(progress, uring, progress->cqes[i]);
+		xnet_progress_cqe(progress, progress->cqes[i]);
 	}
 
 	ofi_uring_cq_advance(&uring->ring, nready);
@@ -1456,7 +1454,6 @@ static int xnet_init_uring(struct xnet_uring *uring, size_t entries,
 	uring->fid.fclass = XNET_CLASS_URING;
 	uring->sockapi = sockapi;
 	uring->sockapi->io_uring = &uring->ring;
-	uring->sockapi->credits = ofi_uring_sq_space_left(&uring->ring);
 
 	ret = ofi_dynpoll_add(dynpoll,
 			      ofi_uring_get_fd(&uring->ring),
