@@ -149,6 +149,11 @@ typedef struct {
 } ofi_io_uring_cqe_t;
 #endif
 
+struct ofi_io_uring_cqe_entry {
+	struct slist_entry entry;
+	ofi_io_uring_cqe_t cqe;
+};
+
 struct ofi_sockctx {
 	void *context;
 	bool uring_sqe_inuse;
@@ -156,6 +161,8 @@ struct ofi_sockctx {
 
 struct ofi_sockapi_uring {
 	ofi_io_uring_t *io_uring;
+	struct ofi_bufpool *cqe_pool;
+	struct slist reaped_cqe_list;
 };
 
 struct ofi_sockapi {
@@ -313,6 +320,8 @@ ssize_t ofi_sockapi_recvv_uring(struct ofi_sockapi *sockapi, SOCKET sock,
 				struct iovec *iov, size_t cnt, int flags,
 				struct ofi_sockctx *ctx);
 
+int ofi_sockapi_reap_cqes(struct ofi_sockapi_uring *uring);
+
 int ofi_sockctx_uring_cancel(struct ofi_sockapi_uring *uring,
 			     struct ofi_sockctx *canceled_ctx,
 			     struct ofi_sockctx *ctx);
@@ -403,6 +412,10 @@ ofi_sockapi_recvv_uring(struct ofi_sockapi *sockapi, SOCKET sock,
 	return -FI_ENOSYS;
 }
 
+static inline int ofi_sockapi_reap_cqes(struct ofi_sockapi_uring *uring)
+{
+	return -FI_ENOSYS;
+}
 
 static inline int
 ofi_sockctx_uring_cancel(struct ofi_sockapi_uring *uring,

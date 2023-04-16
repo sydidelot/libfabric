@@ -68,18 +68,28 @@ static struct ofi_sockapi xnet_sockapi_socket =
 
 static void xnet_submit_uring(struct xnet_uring *uring)
 {
-	int submitted;
+	int ret;
 	int ready;
 
 	assert(xnet_io_uring);
 
+retry:
 	ready = ofi_uring_sq_ready(&uring->ring);
 	if (!ready)
 		return;
 
-	submitted = ofi_uring_submit(&uring->ring);
-	(void) submitted; /* avoid unused variable warning */
-	assert(ready == submitted);
+	ret = ofi_uring_submit(&uring->ring);
+	if (ret == -FI_EBUSY || ret != ready) {
+		ret = ofi_sockapi_reap_cqes(uring->sockapi);
+		if (!ret)
+			goto retry;
+
+		FI_WARN(&xnet_prov, FI_LOG_DOMAIN,
+			"failed to reap cqes\n");
+	} else {
+		FI_WARN(&xnet_prov, FI_LOG_DOMAIN,
+			"failed to submit sqes\n");
+	}
 }
 
 static bool xnet_save_and_cont(struct xnet_ep *ep)
@@ -1077,10 +1087,21 @@ static void xnet_progress_cqe(struct xnet_progress *progress,
 static void xnet_progress_uring(struct xnet_progress *progress,
 				struct xnet_uring *uring)
 {
+	struct ofi_io_uring_cqe_entry *cqe_entry;
 	int nready;
 	int i;
 
 	assert(xnet_io_uring);
+
+	while (!slist_empty(&uring->sockapi->reaped_cqe_list)) {
+		slist_remove_head_container(&uring->sockapi->reaped_cqe_list,
+					    struct ofi_io_uring_cqe_entry,
+			                    cqe_entry, entry);
+
+		xnet_progress_cqe(progress, &cqe_entry->cqe);
+
+		ofi_buf_free(cqe_entry);
+	}
 
 	nready = ofi_uring_peek_batch_cqe(&uring->ring, progress->cqes,
 					  XNET_MAX_EVENTS);
@@ -1111,7 +1132,7 @@ int xnet_uring_cancel(struct xnet_progress *progress,
 						       canceled_ctx,
 						       ctx);
 			if (ret == -OFI_EINPROGRESS_URING) {
-				(void) ofi_uring_submit(&uring->ring);
+				xnet_submit_uring(uring);
 				submitted = true;
 			} else if (ret != -FI_EAGAIN)
 				return ret;
@@ -1454,13 +1475,26 @@ static int xnet_init_uring(struct xnet_uring *uring, size_t entries,
 	uring->fid.fclass = XNET_CLASS_URING;
 	uring->sockapi = sockapi;
 	uring->sockapi->io_uring = &uring->ring;
+	slist_init(&uring->sockapi->reaped_cqe_list);
+
+	ret = ofi_bufpool_create(&uring->sockapi->cqe_pool,
+				 sizeof(struct ofi_io_uring_cqe_entry),
+				 16, 0, 64, 0);
+	if (ret)
+		goto uring_destroy;
 
 	ret = ofi_dynpoll_add(dynpoll,
 			      ofi_uring_get_fd(&uring->ring),
 			      POLLIN, &uring->fid);
 	if (ret)
-		(void) ofi_uring_destroy(&uring->ring);
+		goto bufpool_destroy;
 
+	return 0;
+
+bufpool_destroy:
+	ofi_bufpool_destroy(uring->sockapi->cqe_pool);
+uring_destroy:
+	(void) ofi_uring_destroy(&uring->ring);
 	return ret;
 }
 
@@ -1470,8 +1504,11 @@ static void xnet_destroy_uring(struct xnet_uring *uring,
 	int ret;
 
 	assert(xnet_io_uring);
-	ofi_dynpoll_del(dynpoll, ofi_uring_get_fd(&uring->ring));
 	assert(ofi_uring_sq_ready(&uring->ring) == 0);
+	assert(slist_empty(&uring->sockapi->reaped_cqe_list));
+
+	ofi_bufpool_destroy(uring->sockapi->cqe_pool);
+	ofi_dynpoll_del(dynpoll, ofi_uring_get_fd(&uring->ring));
 	ret = ofi_uring_destroy(&uring->ring);
 	if (ret) {
 		FI_WARN(&xnet_prov, FI_LOG_EP_CTRL,
