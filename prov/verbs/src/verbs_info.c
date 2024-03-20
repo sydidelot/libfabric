@@ -463,15 +463,19 @@ static inline int vrb_get_qp_cap(struct ibv_context *ctx,
 	       info->rx_attr->size &&
 	       info->rx_attr->iov_limit);
 
-	init_attr.cap.max_send_wr = MIN(vrb_gl_data.def_tx_size,
-					info->tx_attr->size);
+	init_attr.cap.max_send_wr =
+		vrb_adjust_max_send_wr(pd, ctx, qp_type,
+				       MIN(vrb_gl_data.def_tx_size,
+					   info->tx_attr->size));
 	init_attr.cap.max_send_sge = MIN(vrb_gl_data.def_tx_iov_limit,
 					 info->tx_attr->iov_limit);
 
 	if (qp_type != IBV_QPT_XRC_SEND) {
 		init_attr.recv_cq = cq;
-		init_attr.cap.max_recv_wr = MIN(vrb_gl_data.def_rx_size,
-						info->rx_attr->size);
+		init_attr.cap.max_recv_wr =
+			vrb_adjust_max_recv_wr(pd, ctx, qp_type,
+					       MIN(vrb_gl_data.def_rx_size,
+						   info->rx_attr->size));
 		init_attr.cap.max_recv_sge = MIN(vrb_gl_data.def_rx_iov_limit,
 						 info->rx_attr->iov_limit);
 	}

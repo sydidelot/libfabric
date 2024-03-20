@@ -461,6 +461,88 @@ void vrb_set_rnr_timer(struct ibv_qp *qp)
 	vrb_dbg_query_qp_attr(qp);
 }
 
+int vrb_adjust_max_send_wr(struct ibv_pd *pd, struct ibv_context *context,
+			   enum ibv_qp_type qp_type, int send_wr)
+{
+	struct ibv_qp_init_attr qp_attr;
+	struct ibv_qp *qp = NULL;
+	struct ibv_cq *cq;
+
+	cq = ibv_create_cq(context, 1, NULL, NULL, 0);
+	assert(cq);
+
+	memset(&qp_attr, 0, sizeof(qp_attr));
+	qp_attr.send_cq = cq;
+	qp_attr.qp_type = qp_type;
+	qp_attr.cap.max_send_sge = 1;
+	if (qp_type != IBV_QPT_XRC_SEND) {
+		qp_attr.recv_cq = cq;
+		qp_attr.cap.max_recv_wr = 1;
+		qp_attr.cap.max_recv_sge = 1;
+	}
+	qp_attr.sq_sig_all = 1;
+
+	while (send_wr > 1)
+	{
+		qp_attr.cap.max_send_wr = send_wr;
+		qp = ibv_create_qp(pd, &qp_attr);
+		if (qp) {
+			send_wr = qp_attr.cap.max_send_wr;
+			ibv_destroy_qp(qp);
+			break;
+		} else {
+			send_wr /= 2;
+		}
+	}
+
+	if (cq)
+		ibv_destroy_cq(cq);
+
+	return send_wr;
+}
+
+int vrb_adjust_max_recv_wr(struct ibv_pd *pd, struct ibv_context *context,
+			   enum ibv_qp_type qp_type, int recv_wr)
+{
+	struct ibv_qp_init_attr qp_attr;
+	struct ibv_qp *qp = NULL;
+	struct ibv_cq *cq;
+
+	if (qp_type == IBV_QPT_XRC_SEND)
+		return recv_wr;
+
+	cq = ibv_create_cq(context, 1, NULL, NULL, 0);
+	assert(cq);
+
+	memset(&qp_attr, 0, sizeof(qp_attr));
+	qp_attr.send_cq = cq;
+	qp_attr.qp_type = qp_type;
+	qp_attr.cap.max_send_wr = 1;
+	qp_attr.cap.max_send_sge = 1;
+	qp_attr.recv_cq = cq;
+	qp_attr.cap.max_recv_wr = 1;
+	qp_attr.cap.max_recv_sge = 1;
+	qp_attr.sq_sig_all = 1;
+
+	while (recv_wr > 1)
+	{
+		qp_attr.cap.max_recv_wr = recv_wr;
+		qp = ibv_create_qp(pd, &qp_attr);
+		if (qp) {
+			recv_wr = qp_attr.cap.max_recv_wr;
+			ibv_destroy_qp(qp);
+			break;
+		} else {
+			recv_wr /= 2;
+		}
+	}
+
+	if (cq)
+		ibv_destroy_cq(cq);
+
+	return recv_wr;
+}
+
 int vrb_find_max_inline(struct ibv_pd *pd, struct ibv_context *context,
 			   enum ibv_qp_type qp_type)
 {
