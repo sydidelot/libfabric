@@ -461,16 +461,19 @@ void vrb_set_rnr_timer(struct ibv_qp *qp)
 	vrb_dbg_query_qp_attr(qp);
 }
 
-int vrb_find_max_inline(struct ibv_pd *pd, struct ibv_context *context,
-			   enum ibv_qp_type qp_type)
+int vrb_find_max_inline(struct ibv_context *context, enum ibv_qp_type qp_type)
 {
 	struct ibv_qp_init_attr qp_attr;
+	struct ibv_pd *pd;
 	struct ibv_qp *qp = NULL;
 	struct ibv_cq *cq;
 	int max_inline = 2;
 	int rst = 0;
 	const char *dev_name = ibv_get_device_name(context->device);
 	uint8_t i;
+
+	pd = ibv_alloc_pd(context);
+	assert(pd);
 
 	for (i = 0; i < count_of(verbs_dev_presets); i++) {
 		if (!strncmp(dev_name, verbs_dev_presets[i].dev_name_prefix,
@@ -542,6 +545,10 @@ int vrb_find_max_inline(struct ibv_pd *pd, struct ibv_context *context,
 
 	if (cq) {
 		ibv_destroy_cq(cq);
+	}
+
+	if (pd) {
+		ibv_dealloc_pd(pd);
 	}
 
 	return rst;

@@ -878,8 +878,7 @@ int vrb_query_atomic(struct fid_domain *domain_fid, enum fi_datatype datatype,
 			uint64_t flags);
 void vrb_set_rnr_timer(struct ibv_qp *qp);
 void vrb_cleanup_cq(struct vrb_ep *cur_ep);
-int vrb_find_max_inline(struct ibv_pd *pd, struct ibv_context *context,
-			   enum ibv_qp_type qp_type);
+int vrb_find_max_inline(struct ibv_context *context, enum ibv_qp_type qp_type);
 
 struct vrb_dgram_av {
 	struct util_av util_av;
