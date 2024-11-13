@@ -1064,8 +1064,10 @@ static int vrb_ep_enable(struct fid_ep *ep_fid)
 			 * to share same post functions as RC QP. */
 			ep->ibv_qp = ep->id->qp;
 
-			if (vrb_rdma_set_tos(ep->id))
+			if (vrb_rdma_set_tos(ep->id)) {
 				VRB_WARN_ERRNO(FI_LOG_EP_CTRL, "vrb_rdma_set_tos");
+				return -errno;
+			}
 		}
 		break;
 	case FI_EP_DGRAM:

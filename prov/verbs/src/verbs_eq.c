@@ -894,8 +894,12 @@ vrb_eq_addr_resolved_event(struct vrb_ep *ep)
 		 * to share same post functions as RC QP. */
 		ep->ibv_qp = ep->id->qp;
 
-		if (vrb_rdma_set_tos(ep->id))
+		if (vrb_rdma_set_tos(ep->id)) {
+			ep->state = VRB_DISCONNECTED;
+			ret = -errno;
 			VRB_WARN_ERRNO(FI_LOG_EP_CTRL, "vrb_rdma_set_tos");
+			return ret;
+		}
 	}
 
 	assert(ep->ibv_qp);
