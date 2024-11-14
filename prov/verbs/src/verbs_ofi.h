@@ -645,6 +645,7 @@ struct vrb_ep {
 		size_t			inject_size;
 		size_t                  tx_size;
 		size_t                  tx_iov_limit;
+		uint32_t		tx_tclass;
 		size_t                  rx_size;
 		size_t                  rx_iov_limit;
 		uint32_t                protocol;
@@ -1053,12 +1054,12 @@ vrb_free_recv_wr(struct vrb_progress *progress, struct vrb_recv_wr *wr)
 	ofi_buf_free(wr);
 }
 
-static inline int vrb_rdma_set_tos(struct rdma_cm_id *id)
+static inline int vrb_rdma_set_tos(struct rdma_cm_id *id, uint32_t tclass)
 {
-	if (vrb_gl_data.tos == VERBS_TOS_UNSET)
+	if (!(tclass & FI_TC_DSCP))
 		return 0;
 
-	uint8_t tos = vrb_gl_data.tos;
+	uint8_t tos = fi_tc_dscp_get(tclass);
 	return rdma_set_option(id, RDMA_OPTION_ID, RDMA_OPTION_ID_TOS, &tos,
 			       sizeof(tos));
 }

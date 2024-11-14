@@ -45,7 +45,6 @@ static const char *local_node = "localhost";
 #define VERBS_DEFAULT_MIN_RNR_TIMER 12
 
 struct vrb_gl_data vrb_gl_data = {
-	.tos			= VERBS_TOS_UNSET,
 	.def_tx_size		= 384,
 	.def_rx_size		= 384,
 	.def_tx_iov_limit	= 4,

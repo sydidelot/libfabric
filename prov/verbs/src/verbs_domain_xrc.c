@@ -68,7 +68,7 @@ static int vrb_create_ini_qp(struct vrb_xrc_ep *ep)
 		return ret;
 	}
 
-	if (vrb_rdma_set_tos(ep->base_ep.id)) {
+	if (vrb_rdma_set_tos(ep->base_ep.id, ep->base_ep.info_attr.tx_tclass)) {
 		ret = -errno;
 		VRB_WARN_ERRNO(FI_LOG_EP_CTRL, "vrb_rdma_set_tos");
 		return ret;
@@ -407,7 +407,7 @@ int vrb_ep_create_tgt_qp(struct vrb_xrc_ep *ep, uint32_t tgt_qpn)
 	}
 	ep->tgt_ibv_qp = ep->tgt_id->qp;
 
-	if (vrb_rdma_set_tos(ep->tgt_id)) {
+	if (vrb_rdma_set_tos(ep->base_ep.id, ep->base_ep.info_attr.tx_tclass)) {
 		ret = -errno;
 		VRB_WARN_ERRNO(FI_LOG_EP_CTRL, "vrb_rdma_set_tos");
 		return ret;

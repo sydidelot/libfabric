@@ -1064,7 +1064,7 @@ static int vrb_ep_enable(struct fid_ep *ep_fid)
 			 * to share same post functions as RC QP. */
 			ep->ibv_qp = ep->id->qp;
 
-			if (vrb_rdma_set_tos(ep->id)) {
+			if (vrb_rdma_set_tos(ep->id, ep->info_attr.tx_tclass)) {
 				VRB_WARN_ERRNO(FI_LOG_EP_CTRL, "vrb_rdma_set_tos");
 				return -errno;
 			}
@@ -1188,6 +1188,7 @@ static int vrb_ep_save_info_attr(struct vrb_ep *ep, struct fi_info *info)
 	ep->info_attr.inject_size = info->tx_attr->inject_size;
 	ep->info_attr.tx_size = info->tx_attr->size;
 	ep->info_attr.tx_iov_limit = info->tx_attr->iov_limit;
+	ep->info_attr.tx_tclass = info->tx_attr->tclass;
 	ep->info_attr.rx_size = info->rx_attr->size;
 	ep->info_attr.rx_iov_limit = info->rx_attr->iov_limit;
 	ep->info_attr.addr_format = info->addr_format;
